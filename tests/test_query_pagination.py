@@ -44,6 +44,20 @@ async def test_where_if_and_count(session) -> None:
 
 
 @pytest.mark.asyncio
+async def test_where_if_lazy_lambda_skips_eager_ge_none(session) -> None:
+    await _seed(session, 1)
+    repo = Repository(session, User)
+    min_age: int | None = None
+    # При «голом» User.age >= min_age в аргументе where_if Python всё равно строит выражение.
+    # Lambda не вызывается, пока condition ложь — min_age is None, фильтр не применяется.
+    c = await repo.query().where_if(min_age is not None, lambda: User.age >= min_age).count()
+    assert c == 1
+    min_age = 100
+    c0 = await repo.query().where_if(min_age is not None, lambda: User.age >= min_age).count()  # type: ignore[operator, arg-type, misc]  # noqa: E501
+    assert c0 == 0
+
+
+@pytest.mark.asyncio
 async def test_paginate_and_page_shape(session) -> None:
     await _seed(session, 5)
     repo = Repository(session, User)

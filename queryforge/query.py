@@ -1,7 +1,8 @@
 # Конвейер Query: where, project, paginate, терминалы, statement.
 from __future__ import annotations
 
-from typing import Any, Generic, Self, TypeVar
+from collections.abc import Callable
+from typing import Any, Generic, Self, TypeVar, cast
 
 from pydantic import BaseModel
 from sqlalchemy import Select, func, select
@@ -17,6 +18,19 @@ from queryforge.soft_delete import (
 )
 
 ModelT = TypeVar("ModelT", bound=Any)
+
+WhereInput = ColumnElement[bool] | Callable[[], ColumnElement[bool]]
+
+
+def _as_where_clause(
+    c: WhereInput,
+) -> ColumnElement[bool]:
+    if isinstance(c, ColumnElement):
+        return c
+    if callable(c):
+        return cast("ColumnElement[bool]", c())
+    msg = f"where_if: ожидался ColumnElement[bool] или () -> ColumnElement, получено {type(c)!r}"
+    raise TypeError(msg)
 
 
 class Query(Generic[ModelT]):
@@ -102,11 +116,18 @@ class Query(Generic[ModelT]):
             self._wheres.append(c)
         return self
 
-    def where_if(self, condition: object, *clauses: ColumnElement[bool]) -> Self:
+    def where_if(self, condition: object, *clauses: WhereInput) -> Self:
+        """Добавляет where только если condition истинно.
+
+        Каждое из clauses может быть готовым выражением **или** ``lambda: User.age >= x``,
+        если при ``condition is False`` выражение строить нельзя: аргументы вызова ``where_if``
+        вычисляются в Python до входа в метод, поэтому ``User.age >= q.min_age`` при
+        ``q.min_age is None`` падает в SQLAlchemy. Используйте ``lambda: ...`` в таких случаях.
+        """
         if not condition:
             return self
         for c in clauses:
-            self._wheres.append(c)
+            self._wheres.append(_as_where_clause(c))
         return self
 
     def order_by(self, *criterion: Any) -> Self:

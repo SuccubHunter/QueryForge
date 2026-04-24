@@ -1,8 +1,9 @@
 # Конвейер Query: where, project, paginate, терминалы, statement.
+# pyright: strict
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any, Generic, Self, TypeVar, cast
+from collections.abc import Callable, Generator, Iterable
+from typing import Any, Generic, Self, TypeVar, cast, overload
 
 from pydantic import BaseModel
 from sqlalchemy import Select, func, select
@@ -18,6 +19,8 @@ from queryforge.soft_delete import (
 )
 
 ModelT = TypeVar("ModelT", bound=Any)
+ResultT = TypeVar("ResultT", bound=Any)
+DtoT = TypeVar("DtoT", bound=BaseModel)
 
 WhereInput = ColumnElement[bool] | Callable[[], ColumnElement[bool]]
 
@@ -26,14 +29,14 @@ def _as_where_clause(
     c: WhereInput,
 ) -> ColumnElement[bool]:
     if isinstance(c, ColumnElement):
-        return c
+        return cast("ColumnElement[bool]", c)
     if callable(c):
-        return cast("ColumnElement[bool]", c())
+        return c()
     msg = f"where_if: ожидался ColumnElement[bool] или () -> ColumnElement, получено {type(c)!r}"
     raise TypeError(msg)
 
 
-class Query(Generic[ModelT]):
+class Query(Generic[ModelT, ResultT]):
     """Конвейер поверх select(); терминалы выполняют async execute."""
 
     def __init__(
@@ -141,7 +144,7 @@ class Query(Generic[ModelT]):
         acc: list[Any] = []
         for t in terms:
             if isinstance(t, list | tuple):
-                acc.extend(t)
+                acc.extend(cast("Iterable[Any]", t))
             else:
                 acc.append(t)
         return self.order_by(*acc)
@@ -157,7 +160,7 @@ class Query(Generic[ModelT]):
     def apply(self, filter_set: object) -> Self:
         wfn = getattr(filter_set, "_non_null_wheres", None)
         if callable(wfn):
-            for w in wfn():
+            for w in cast("Iterable[ColumnElement[bool]]", wfn()):
                 self._wheres.append(w)
         return self
 
@@ -169,19 +172,65 @@ class Query(Generic[ModelT]):
         self._soft_mode = "only_deleted"
         return self
 
-    def project(self, dto: type[BaseModel]) -> Self:
-        self._projection = dto
-        self._explicit_cols = None
-        return self
+    def _copy_to_result(
+        self,
+        *,
+        projection: type[BaseModel] | None,
+        explicit_cols: list[Any] | None,
+    ) -> Query[ModelT, Any]:
+        q: Query[ModelT, Any] = Query(
+            self._session,
+            self._model,
+            from_statement=self._raw,
+            soft_mode=self._soft_mode,
+            projection=projection,
+            _explicit_cols=explicit_cols,
+        )
+        q._wheres = list(self._wheres)
+        q._order = list(self._order)
+        q._limit = self._limit
+        q._offset = self._offset
+        return q
 
-    def into(self, dto: type[BaseModel]) -> Self:
-        self._projection = dto
-        return self
+    def project(self, dto: type[DtoT]) -> Query[ModelT, DtoT]:
+        return cast(
+            "Query[ModelT, DtoT]",
+            self._copy_to_result(projection=dto, explicit_cols=None),
+        )
+
+    def into(self, dto: type[DtoT]) -> Query[ModelT, DtoT]:
+        cols = list(self._explicit_cols) if self._explicit_cols is not None else None
+        return cast(
+            "Query[ModelT, DtoT]",
+            self._copy_to_result(projection=dto, explicit_cols=cols),
+        )
+
+    @overload
+    def select(self, __a: Any) -> Query[ModelT, tuple[Any]]: ...  # noqa: A003
+
+    @overload
+    def select(self, __a: Any, __b: Any) -> Query[ModelT, tuple[Any, Any]]: ...
+
+    @overload
+    def select(self, __a: Any, __b: Any, __c: Any) -> Query[ModelT, tuple[Any, Any, Any]]: ...
+
+    @overload
+    def select(
+        self, __a: Any, __b: Any, __c: Any, __d: Any
+    ) -> Query[ModelT, tuple[Any, Any, Any, Any]]: ...
+
+    @overload
+    def select(
+        self, __a: Any, __b: Any, __c: Any, __d: Any, __e: Any
+    ) -> Query[ModelT, tuple[Any, Any, Any, Any, Any]]: ...
+
+    @overload
+    def select(self, *entities: Any) -> Query[ModelT, Any]: ...
 
     def select(  # noqa: A003
         self, *entities: Any
-    ) -> Self:
-        q = Query(
+    ) -> Query[ModelT, Any]:
+        q: Query[ModelT, Any] = Query(
             self._session,
             self._model,
             soft_mode=self._soft_mode,
@@ -199,47 +248,48 @@ class Query(Generic[ModelT]):
         self,
         page: int = 1,
         size: int = 20,
-    ) -> _PaginateTerminal:
-        return _PaginateTerminal(self, page=page, size=size)
+    ) -> PaginateTerminal[ResultT]:
+        return PaginateTerminal(self, page=page, size=size)
 
-    async def to_list(
-        self,
-    ) -> list[ModelT] | list[BaseModel] | list[tuple[Any, ...]]:
+    async def to_list(self) -> list[ResultT]:
         stmt = self._build_select_paginated()
         res = await self._session.execute(stmt)
         if self._projection is not None:
-            return [row_to_pydantic(self._projection, m) for m in res.mappings().all()]  # type: ignore[return-value,union-attr]
+            out = [row_to_pydantic(self._projection, m) for m in res.mappings().all()]
+            return cast("list[ResultT]", out)
         if self._explicit_cols is not None:
-            return [tuple(r) for r in res.all()]  # type: ignore[return-value,union-attr]
-        return list(res.scalars().unique().all())  # type: ignore[return-value,union-attr]
+            out = [tuple(r) for r in res.all()]
+            return cast("list[ResultT]", out)
+        out = list(res.scalars().unique().all())
+        return cast("list[ResultT]", out)
 
-    async def first(self) -> ModelT | BaseModel:
+    async def first(self) -> ResultT:
         r = await self.limit(1).to_list()
         if not r:
             raise RuntimeError("Query.first(): пусто")
-        return r[0]  # type: ignore[return-value,union-attr]
+        return r[0]
 
-    async def first_or_none(self) -> ModelT | BaseModel | None:
+    async def first_or_none(self) -> ResultT | None:
         r = await self.limit(1).to_list()
         if not r:
             return None
-        return r[0]  # type: ignore[return-value,union-attr]
+        return r[0]
 
-    async def one(self) -> ModelT | BaseModel:
+    async def one(self) -> ResultT:
         r = await self.limit(2).to_list()
         if len(r) == 0:
             raise RuntimeError("Query.one(): пусто")
         if len(r) > 1:
             raise RuntimeError("Query.one(): получено > 1 строки")
-        return r[0]  # type: ignore[return-value,union-attr]
+        return r[0]
 
-    async def one_or_none(self) -> ModelT | BaseModel | None:
+    async def one_or_none(self) -> ResultT | None:
         r = await self.limit(2).to_list()
         if len(r) == 0:
             return None
         if len(r) > 1:
             raise RuntimeError("Query.one_or_none(): получено > 1 строки")
-        return r[0]  # type: ignore[return-value,union-attr]
+        return r[0]
 
     async def count(self) -> int:
         cstmt = self._count_select()
@@ -254,20 +304,22 @@ class Query(Generic[ModelT]):
         return res.scalars().first() is not None
 
 
-class _PaginateTerminal:
-    def __init__(self, q: Query[Any], *, page: int, size: int) -> None:
+class PaginateTerminal(Generic[ResultT]):
+    """Ожидаемый пагинатор: ``await query.paginate(page, size)`` -> ``Page[ResultT]``."""
+
+    def __init__(self, q: Query[Any, ResultT], *, page: int, size: int) -> None:
         self._q = q
         self._page = page
         self._size = size
 
-    def __await__(self) -> Any:
+    def __await__(self) -> Generator[Any, None, Page[ResultT]]:
         return self._run().__await__()
 
-    async def _run(self) -> Page[Any]:
+    async def _run(self) -> Page[ResultT]:
         total = await self._q.count()
         off = offset_for_page(self._page, self._size)
         inner = self._q.offset(off).limit(self._size)
         items = await inner.to_list()
-        return Page.from_items(  # type: ignore[no-any-return]
+        return Page[ResultT].from_items(  # pyright: ignore[reportUnknownMemberType]
             list(items), total=total, page=self._page, size=self._size
         )

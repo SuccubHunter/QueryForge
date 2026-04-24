@@ -61,14 +61,23 @@ async def list_users(
     # where_if: для опциональных сравнений с параметрами из запроса используйте lambda,
     # иначе Python вычислит (например) User.age >= q.min_age до вызова where_if — при
     # q.min_age is None SQLAlchemy выдаст ArgumentError.
-    return await (  # type: ignore[return-value, misc]
+    # Цепочка: Query[User, User] → project(UserRead) → Query[User, UserRead];
+    # await paginate → Page[UserRead].
+    result: Page[UserRead] = await (
         users.query()
-        .where_if(q.status is not None, lambda: User.status == q.status)
-        .where_if(q.min_age is not None, lambda: User.age >= q.min_age)  # type: ignore[operator, arg-type, misc]
+        .where_if(
+            q.status is not None,
+            lambda: User.status == q.status,  # type: ignore[arg-type]
+        )
+        .where_if(
+            q.min_age is not None,
+            lambda: User.age >= q.min_age,  # type: ignore[operator, arg-type, misc]
+        )
         .order_by(User.created_at.desc())
         .project(UserRead)
         .paginate(page=q.page, size=q.size)
     )
+    return result
 
 
 # --- GET /users/{user_id} ---

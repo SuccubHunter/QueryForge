@@ -9,6 +9,10 @@
 
 Имя/типы полей в SQL должны совпадать с [app/models.py](app/models.py) (и с `project` в Pydantic [app/schemas.py](app/schemas.py)).
 
+## Типизация QueryForge
+
+Пайплайн в [app/api/users.py](app/api/users.py) согласован с проверкой типов: `Repository[User]`, `query()` даёт `Query[User, User]`, после `project(UserRead)` — `Query[User, UserRead]`, `await … paginate(…)` — `Page[UserRead]`. Линтер/IDE не должны сужать `to_list` или `Page` до «сырого» union.
+
 ## Запуск (Docker)
 
 Из **этого каталога** (`examples/queryforge-demo`):

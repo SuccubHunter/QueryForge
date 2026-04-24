@@ -67,10 +67,10 @@ class Repository(Generic[M]):
         self._session = session
         self._model = model
 
-    def query(self) -> Query[M]:
+    def query(self) -> Query[M, M]:
         return Query(self._session, self._model)
 
-    def from_statement(self, stmt: Select[Any]) -> Query[M]:
+    def from_statement(self, stmt: Select[Any]) -> Query[M, Any]:
         return Query(self._session, self._model, from_statement=stmt, soft_mode="with_all")
 
     async def get(self, pk: Any) -> M:

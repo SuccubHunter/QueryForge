@@ -8,6 +8,7 @@ from typing import Any, Generic, Self, TypeVar, cast, overload
 from pydantic import BaseModel
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import InstrumentedAttribute
 from sqlalchemy.sql import ColumnElement
 
 from queryforge.pagination import Page, offset_for_page
@@ -21,6 +22,17 @@ from queryforge.soft_delete import (
 ModelT = TypeVar("ModelT", bound=Any)
 ResultT = TypeVar("ResultT", bound=Any)
 DtoT = TypeVar("DtoT", bound=BaseModel)
+T1 = TypeVar("T1")
+T2 = TypeVar("T2")
+T3 = TypeVar("T3")
+T4 = TypeVar("T4")
+T5 = TypeVar("T5")
+T6 = TypeVar("T6")
+T7 = TypeVar("T7")
+T8 = TypeVar("T8")
+T9 = TypeVar("T9")
+T10 = TypeVar("T10")
+TValue = TypeVar("TValue")
 
 WhereInput = ColumnElement[bool] | Callable[[], ColumnElement[bool]]
 
@@ -48,6 +60,7 @@ class Query(Generic[ModelT, ResultT]):
         soft_mode: SoftDeleteMode = "default",
         projection: type[BaseModel] | None = None,
         _explicit_cols: list[Any] | None = None,
+        _unwrap_scalar: bool = False,
     ) -> None:
         self._session = session
         self._model: type[ModelT] = model
@@ -59,6 +72,7 @@ class Query(Generic[ModelT, ResultT]):
         self._soft_mode: SoftDeleteMode = soft_mode
         self._projection: type[BaseModel] | None = projection
         self._explicit_cols: list[Any] | None = _explicit_cols
+        self._unwrap_scalar: bool = _unwrap_scalar
 
     def _map_soft_mode(self) -> SoftDeleteMode:
         if self._soft_mode == "default":
@@ -177,6 +191,7 @@ class Query(Generic[ModelT, ResultT]):
         *,
         projection: type[BaseModel] | None,
         explicit_cols: list[Any] | None,
+        unwrap_scalar: bool = False,
     ) -> Query[ModelT, Any]:
         q: Query[ModelT, Any] = Query(
             self._session,
@@ -185,6 +200,7 @@ class Query(Generic[ModelT, ResultT]):
             soft_mode=self._soft_mode,
             projection=projection,
             _explicit_cols=explicit_cols,
+            _unwrap_scalar=unwrap_scalar,
         )
         q._wheres = list(self._wheres)
         q._order = list(self._order)
@@ -202,39 +218,145 @@ class Query(Generic[ModelT, ResultT]):
         cols = list(self._explicit_cols) if self._explicit_cols is not None else None
         return cast(
             "Query[ModelT, DtoT]",
-            self._copy_to_result(projection=dto, explicit_cols=cols),
+            self._copy_to_result(
+                projection=dto, explicit_cols=cols, unwrap_scalar=self._unwrap_scalar
+            ),
         )
 
     @overload
-    def select(self, __a: Any) -> Query[ModelT, tuple[Any]]: ...  # noqa: A003
+    def select(  # noqa: A003
+        self, __a: InstrumentedAttribute[T1] | ColumnElement[T1]
+    ) -> Query[ModelT, tuple[T1]]: ...
 
     @overload
-    def select(self, __a: Any, __b: Any) -> Query[ModelT, tuple[Any, Any]]: ...
+    def select(  # noqa: A003
+        self,
+        __a: InstrumentedAttribute[T1] | ColumnElement[T1],
+        __b: InstrumentedAttribute[T2] | ColumnElement[T2],
+    ) -> Query[ModelT, tuple[T1, T2]]: ...
 
     @overload
-    def select(self, __a: Any, __b: Any, __c: Any) -> Query[ModelT, tuple[Any, Any, Any]]: ...
+    def select(  # noqa: A003
+        self,
+        __a: InstrumentedAttribute[T1] | ColumnElement[T1],
+        __b: InstrumentedAttribute[T2] | ColumnElement[T2],
+        __c: InstrumentedAttribute[T3] | ColumnElement[T3],
+    ) -> Query[ModelT, tuple[T1, T2, T3]]: ...
 
     @overload
-    def select(
-        self, __a: Any, __b: Any, __c: Any, __d: Any
-    ) -> Query[ModelT, tuple[Any, Any, Any, Any]]: ...
+    def select(  # noqa: A003
+        self,
+        __a: InstrumentedAttribute[T1] | ColumnElement[T1],
+        __b: InstrumentedAttribute[T2] | ColumnElement[T2],
+        __c: InstrumentedAttribute[T3] | ColumnElement[T3],
+        __d: InstrumentedAttribute[T4] | ColumnElement[T4],
+    ) -> Query[ModelT, tuple[T1, T2, T3, T4]]: ...
 
     @overload
-    def select(
-        self, __a: Any, __b: Any, __c: Any, __d: Any, __e: Any
-    ) -> Query[ModelT, tuple[Any, Any, Any, Any, Any]]: ...
+    def select(  # noqa: A003
+        self,
+        __a: InstrumentedAttribute[T1] | ColumnElement[T1],
+        __b: InstrumentedAttribute[T2] | ColumnElement[T2],
+        __c: InstrumentedAttribute[T3] | ColumnElement[T3],
+        __d: InstrumentedAttribute[T4] | ColumnElement[T4],
+        __e: InstrumentedAttribute[T5] | ColumnElement[T5],
+    ) -> Query[ModelT, tuple[T1, T2, T3, T4, T5]]: ...
 
     @overload
-    def select(self, *entities: Any) -> Query[ModelT, Any]: ...
+    def select(  # noqa: A003
+        self,
+        __a: InstrumentedAttribute[T1] | ColumnElement[T1],
+        __b: InstrumentedAttribute[T2] | ColumnElement[T2],
+        __c: InstrumentedAttribute[T3] | ColumnElement[T3],
+        __d: InstrumentedAttribute[T4] | ColumnElement[T4],
+        __e: InstrumentedAttribute[T5] | ColumnElement[T5],
+        __f: InstrumentedAttribute[T6] | ColumnElement[T6],
+    ) -> Query[ModelT, tuple[T1, T2, T3, T4, T5, T6]]: ...
+
+    @overload
+    def select(  # noqa: A003
+        self,
+        __a: InstrumentedAttribute[T1] | ColumnElement[T1],
+        __b: InstrumentedAttribute[T2] | ColumnElement[T2],
+        __c: InstrumentedAttribute[T3] | ColumnElement[T3],
+        __d: InstrumentedAttribute[T4] | ColumnElement[T4],
+        __e: InstrumentedAttribute[T5] | ColumnElement[T5],
+        __f: InstrumentedAttribute[T6] | ColumnElement[T6],
+        __g: InstrumentedAttribute[T7] | ColumnElement[T7],
+    ) -> Query[ModelT, tuple[T1, T2, T3, T4, T5, T6, T7]]: ...
+
+    @overload
+    def select(  # noqa: A003
+        self,
+        __a: InstrumentedAttribute[T1] | ColumnElement[T1],
+        __b: InstrumentedAttribute[T2] | ColumnElement[T2],
+        __c: InstrumentedAttribute[T3] | ColumnElement[T3],
+        __d: InstrumentedAttribute[T4] | ColumnElement[T4],
+        __e: InstrumentedAttribute[T5] | ColumnElement[T5],
+        __f: InstrumentedAttribute[T6] | ColumnElement[T6],
+        __g: InstrumentedAttribute[T7] | ColumnElement[T7],
+        __h: InstrumentedAttribute[T8] | ColumnElement[T8],
+    ) -> Query[ModelT, tuple[T1, T2, T3, T4, T5, T6, T7, T8]]: ...
+
+    @overload
+    def select(  # noqa: A003
+        self,
+        __a: InstrumentedAttribute[T1] | ColumnElement[T1],
+        __b: InstrumentedAttribute[T2] | ColumnElement[T2],
+        __c: InstrumentedAttribute[T3] | ColumnElement[T3],
+        __d: InstrumentedAttribute[T4] | ColumnElement[T4],
+        __e: InstrumentedAttribute[T5] | ColumnElement[T5],
+        __f: InstrumentedAttribute[T6] | ColumnElement[T6],
+        __g: InstrumentedAttribute[T7] | ColumnElement[T7],
+        __h: InstrumentedAttribute[T8] | ColumnElement[T8],
+        __i: InstrumentedAttribute[T9] | ColumnElement[T9],
+    ) -> Query[ModelT, tuple[T1, T2, T3, T4, T5, T6, T7, T8, T9]]: ...
+
+    @overload
+    def select(  # noqa: A003
+        self,
+        __a: InstrumentedAttribute[T1] | ColumnElement[T1],
+        __b: InstrumentedAttribute[T2] | ColumnElement[T2],
+        __c: InstrumentedAttribute[T3] | ColumnElement[T3],
+        __d: InstrumentedAttribute[T4] | ColumnElement[T4],
+        __e: InstrumentedAttribute[T5] | ColumnElement[T5],
+        __f: InstrumentedAttribute[T6] | ColumnElement[T6],
+        __g: InstrumentedAttribute[T7] | ColumnElement[T7],
+        __h: InstrumentedAttribute[T8] | ColumnElement[T8],
+        __i: InstrumentedAttribute[T9] | ColumnElement[T9],
+        __j: InstrumentedAttribute[T10] | ColumnElement[T10],
+    ) -> Query[ModelT, tuple[T1, T2, T3, T4, T5, T6, T7, T8, T9, T10]]: ...
+
+    @overload
+    def select(self, *entities: Any) -> Query[ModelT, tuple[Any, ...]]: ...  # noqa: A003
 
     def select(  # noqa: A003
         self, *entities: Any
+    ) -> Query[ModelT, Any]:
+        """Только перечисленные колонки. `to_list()` — `list[tuple[...]]` с типами колонок."""
+        return self._select_explicit(entities, unwrap_scalar=False)
+
+    @overload
+    def select_value(
+        self, col: InstrumentedAttribute[TValue] | ColumnElement[TValue]
+    ) -> Query[ModelT, TValue]: ...
+
+    @overload
+    def select_value(self, col: Any) -> Query[ModelT, Any]: ...
+
+    def select_value(self, col: Any) -> Query[ModelT, Any]:
+        """Одна колонка: `to_list()` возвращает `list[T]`, а не `list[tuple[T]]`."""
+        return self._select_explicit((col,), unwrap_scalar=True)
+
+    def _select_explicit(
+        self, entities: tuple[Any, ...], *, unwrap_scalar: bool
     ) -> Query[ModelT, Any]:
         q: Query[ModelT, Any] = Query(
             self._session,
             self._model,
             soft_mode=self._soft_mode,
             from_statement=None,
+            _unwrap_scalar=unwrap_scalar,
         )
         q._wheres = list(self._wheres)
         q._order = list(self._order)
@@ -258,7 +380,9 @@ class Query(Generic[ModelT, ResultT]):
             out = [row_to_pydantic(self._projection, m) for m in res.mappings().all()]
             return cast("list[ResultT]", out)
         if self._explicit_cols is not None:
-            out = [tuple(r) for r in res.all()]
+            rows = res.all()
+            # _unwrap_scalar: select_value снимает скаляр; select — кортежи полей
+            out = [r[0] for r in rows] if self._unwrap_scalar else [tuple(r) for r in rows]
             return cast("list[ResultT]", out)
         out = list(res.scalars().unique().all())
         return cast("list[ResultT]", out)

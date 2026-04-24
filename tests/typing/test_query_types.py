@@ -1,6 +1,8 @@
 # Статическая типизация Query: assert_type согласован с pyright.
 from __future__ import annotations
 
+import datetime
+import uuid
 from typing import Any, assert_type
 
 import pytest
@@ -59,7 +61,7 @@ async def test_query_paginate_projected(session) -> None:
 
 @pytest.mark.asyncio
 async def test_query_select_two_columns(session) -> None:
-    """Рантайм + узкая сигнатура select(a, b) -> tuple[Any, Any]."""
+    """Рантайм + select(id, email) -> list[tuple[UUID, str]]."""
     repo = Repository(session, User)
     u = User(
         email="t@t.com",
@@ -69,8 +71,46 @@ async def test_query_select_two_columns(session) -> None:
     session.add(u)
     await session.commit()
     rows = await repo.query().select(User.id, User.email).to_list()
-    assert_type(rows, list[tuple[Any, Any]])
+    assert_type(rows, list[tuple[uuid.UUID, str]])
     assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_query_select_one_column_typed(session) -> None:
+    """Одна колонка: tuple[UUID]."""
+    repo = Repository(session, User)
+    u = User(email="o@o.com", age=1, status=UserStatus.ACTIVE)
+    session.add(u)
+    await session.commit()
+    rows = await repo.query().select(User.id).to_list()
+    assert_type(rows, list[tuple[uuid.UUID]])
+
+
+@pytest.mark.asyncio
+async def test_query_select_value_email(session) -> None:
+    """select_value: list[str] без обёртки в tuple."""
+    repo = Repository(session, User)
+    u = User(email="v@v.com", age=1, status=UserStatus.ACTIVE)
+    session.add(u)
+    await session.commit()
+    emails = await repo.query().select_value(User.email).to_list()
+    assert_type(emails, list[str])
+    assert emails == ["v@v.com"]
+
+
+@pytest.mark.asyncio
+async def test_query_select_mixed_scalars_typed(session) -> None:
+    """Разные скаляры: int, datetime."""
+    repo = Repository(session, User)
+    u = User(email="m@m.com", age=42, status=UserStatus.ACTIVE)
+    session.add(u)
+    await session.commit()
+    ages = await repo.query().select_value(User.age).to_list()
+    assert_type(ages, list[int])
+    created = await repo.query().select_value(User.created_at).to_list()
+    assert_type(created, list[datetime.datetime])
+    triple = await repo.query().select(User.id, User.email, User.age).to_list()
+    assert_type(triple, list[tuple[uuid.UUID, str, int]])
 
 
 @pytest.mark.asyncio

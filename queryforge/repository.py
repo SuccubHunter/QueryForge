@@ -7,6 +7,7 @@ from typing import Any, Generic, TypeVar
 from uuid import UUID
 
 from sqlalchemy import Select, inspect
+from sqlalchemy.exc import InvalidRequestError, NoInspectionAvailable
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from queryforge.audit import build_event, emit_audit_event
@@ -18,16 +19,26 @@ M = TypeVar("M", bound=Any)
 
 
 def _id_for_audit(instance: Any) -> Any:
+    try:
+        st = inspect(instance, raiseerr=True)
+    except NoInspectionAvailable:
+        st = None
+    else:
+        idt = getattr(st, "identity", None)
+        if idt is not None and len(idt) == 1:
+            return idt[0]
+        if idt is not None and len(idt) > 1:
+            return idt
     m = type(instance)
     try:
-        mi = inspect(m)
+        mi = inspect(m, raiseerr=True)
         pks = mi.mapper.primary_key
         if len(pks) == 1:
             k = pks[0].key
             return getattr(instance, k, None)
         if len(pks) > 1:
             return tuple(getattr(instance, c.key) for c in pks)
-    except Exception:  # noqa: BLE001
+    except (NoInspectionAvailable, InvalidRequestError, AttributeError, TypeError):
         pass
     for name in ("id", "pk"):
         if hasattr(instance, name):

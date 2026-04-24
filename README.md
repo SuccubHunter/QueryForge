@@ -27,7 +27,7 @@ users: Repository[User] = Depends(repo(User, session_dep=get_async_session))
 ## Кратко
 
 - `Repository(session, model)` — `query()`, `get` / `get_or_none` / `exists` / `add` / `delete` / `update`, `from_statement(select(...))`.
-- `Query` — `where` / `where_if`, `order_by` / `sort`, `apply(FilterSet)`, `project(DTO)` / `select` + `into`, `paginate` (await → `Page[T]`).
+- `Query` — `where` / `where_if`, `order_by` / `sort`, `apply(FilterSet)`, `project(DTO)` / `select` + `into`, `paginate` (await → `Page[T]`). Для `project(DTO)` имена полей Pydantic должны совпадать с mapped-атрибутами модели.
 - Мягкое удаление: `SoftDeleteMixin` + `deleted_at`.
 - Аудит: `AuditContext`, `add_audit_listener`, события при `add` / `update` / `delete`.
 

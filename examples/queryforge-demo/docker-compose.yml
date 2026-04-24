@@ -1,0 +1,34 @@
+# Запуск из каталога examples/queryforge-demo: docker compose up --build
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: queryforge
+      POSTGRES_PASSWORD: queryforge
+      POSTGRES_DB: demodb
+    ports:
+      - "5432:5432"
+    volumes:
+      - queryforge_demo_pgdata:/var/lib/postgresql/data
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U queryforge -d demodb"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  api:
+    build:
+      context: ../..
+      dockerfile: examples/queryforge-demo/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://queryforge:queryforge@db:5432/demodb
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  queryforge_demo_pgdata: {}

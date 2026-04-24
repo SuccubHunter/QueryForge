@@ -33,6 +33,10 @@ users: Repository[User] = Depends(repo(User, session_dep=get_async_session))
 
 См. примеры в `tests/`.
 
+## Демо с Docker и PostgreSQL
+
+Полноценный пример с `docker compose`, сидами в БД и эндпоинтами: [examples/queryforge-demo/README.md](examples/queryforge-demo/README.md).
+
 ## Лицензия
 
 MIT

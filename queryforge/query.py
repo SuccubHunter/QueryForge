@@ -65,6 +65,13 @@ class Query(Generic[ModelT]):
             s = select(*self._explicit_cols)  # type: ignore[arg-type]
         elif self._projection is not None:
             cols = pydantic_model_columns(self._model, self._projection)
+            if not cols:
+                msg = (
+                    f"project({self._projection.__name__}): нет совпадений полей DTO с колонками "
+                    f"модели {getattr(self._model, '__name__', self._model)}. "
+                    "Имена полей Pydantic должны соответствовать mapped-атрибутам."
+                )
+                raise ValueError(msg)
             s = select(*cols)  # type: ignore[call-overload,arg-type]
         else:
             s = select(self._model)  # type: ignore[call-overload]
@@ -161,7 +168,8 @@ class Query(Generic[ModelT]):
         )
         q._wheres = list(self._wheres)
         q._order = list(self._order)
-        q._raw = self._raw
+        # Явные колонки — новый путь; не тянем сырой from_statement, иначе приоритет у _raw
+        q._raw = None
         q._explicit_cols = list(entities)
         q._projection = None
         return q
@@ -197,13 +205,15 @@ class Query(Generic[ModelT]):
         return r[0]  # type: ignore[return-value,union-attr]
 
     async def one(self) -> ModelT | BaseModel:
-        r = await self.to_list()
-        if len(r) != 1:
-            raise RuntimeError(f"Query.one(): ожидалась одна строка, получено {len(r)}")
+        r = await self.limit(2).to_list()
+        if len(r) == 0:
+            raise RuntimeError("Query.one(): пусто")
+        if len(r) > 1:
+            raise RuntimeError("Query.one(): получено > 1 строки")
         return r[0]  # type: ignore[return-value,union-attr]
 
     async def one_or_none(self) -> ModelT | BaseModel | None:
-        r = await self.to_list()
+        r = await self.limit(2).to_list()
         if len(r) == 0:
             return None
         if len(r) > 1:

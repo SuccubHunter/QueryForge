@@ -78,7 +78,7 @@ class Repository(Generic[M]):
 
     async def exists(self, *conditions: Any) -> bool:
         if not conditions:
-            return (await self.query().count()) > 0
+            return await self.query().exists()
         q = self.query()
         for c in conditions:
             q = q.where(c)  # type: ignore[assignment, arg-type, misc]

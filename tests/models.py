@@ -6,7 +6,7 @@ import enum
 import uuid
 
 from pydantic import BaseModel
-from queryforge import SoftDeleteMixin
+from queryforge import SoftDeleteMixin, TenantMixin
 from sqlalchemy import JSON, ForeignKey, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -47,6 +47,15 @@ class Profile(Base):
     )
     bio: Mapped[str] = mapped_column(String(256))
     user: Mapped[User] = relationship(back_populates="profile")
+
+
+class TenantItem(TenantMixin, Base):
+    """Сущность только с tenant (без soft delete) для тестов multi-tenancy."""
+
+    __tablename__ = "tenant_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(64))
 
 
 class User(SoftDeleteMixin, Base):

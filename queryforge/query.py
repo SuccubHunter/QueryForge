@@ -2,9 +2,10 @@
 # pyright: strict
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass, replace
-from typing import Any, Generic, Self, TypeVar, cast, overload
+from typing import Any, Generic, Literal, Self, TypeVar, cast, overload
 
 from pydantic import BaseModel
 from sqlalchemy import Select, func, select
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute, joinedload, selectinload
 from sqlalchemy.sql import ColumnElement
 
+from queryforge.exceptions import MissingTenantError
 from queryforge.pagination import Page, offset_for_page
 from queryforge.projection import (
     ProjectionMode,
@@ -24,6 +26,7 @@ from queryforge.soft_delete import (
     has_soft_delete,
     soft_delete_clause_for_mode,
 )
+from queryforge.tenancy import get_tenant_id, has_tenant
 
 ModelT = TypeVar("ModelT", bound=Any)
 ResultT = TypeVar("ResultT", bound=Any)
@@ -77,6 +80,8 @@ class QueryState:
     projection_nested: ProjectionNested = "forbid"
     joins: tuple[JoinOp, ...] = ()
     loader_options: tuple[Any, ...] = ()
+    tenant_mode: Literal["default", "all"] = "default"
+    tenant_scope: uuid.UUID | str | int | None = None
 
 
 def _as_where_clause(
@@ -125,6 +130,7 @@ class Query(Generic[ModelT, ResultT]):
                 unwrap_scalar=_unwrap_scalar,
                 projection_mode=_projection_mode,
                 projection_nested=_projection_nested,
+                tenant_mode="all" if from_statement is not None else "default",
             )
 
     def _map_soft_mode(self) -> SoftDeleteMode:
@@ -140,8 +146,27 @@ class Query(Generic[ModelT, ResultT]):
             return []
         return list(soft_delete_clause_for_mode(self._model, self._map_soft_mode()))
 
+    def _effective_tenant_id_for_filter(self) -> uuid.UUID | str | int:
+        st = self._state
+        if st.tenant_scope is not None:
+            return st.tenant_scope
+        tid = get_tenant_id()
+        if tid is None:
+            msg = "Для tenant-scoped модели укажите TenantContext или query.for_tenant(...)"
+            raise MissingTenantError(msg)
+        return tid
+
+    def _tenant_wheres(self) -> list[ColumnElement[bool]]:
+        if self._state.raw is not None or not has_tenant(self._model):
+            return []
+        if self._state.tenant_mode == "all":
+            return []
+        eff = self._effective_tenant_id_for_filter()
+        col = self._model.tenant_id
+        return [col == eff]
+
     def _all_wheres(self) -> list[ColumnElement[bool]]:
-        return [*self._state.wheres, *self._soft_wheres()]
+        return [*self._state.wheres, *self._soft_wheres(), *self._tenant_wheres()]
 
     def _build_base_select(self, *, with_loader_options: bool = True) -> Select[Any]:
         st = self._state
@@ -276,6 +301,20 @@ class Query(Generic[ModelT, ResultT]):
         if not extra:
             return self
         new_state = replace(self._state, wheres=(*self._state.wheres, *extra))
+        return self._with_state(new_state)
+
+    def for_tenant(self, tenant_id: uuid.UUID | str | int) -> Self:
+        """Ограничить выборку одним tenant (без глобального ``TenantContext``)."""
+        new_state = replace(
+            self._state,
+            tenant_scope=tenant_id,
+            tenant_mode="default",
+        )
+        return self._with_state(new_state)
+
+    def with_all_tenants(self) -> Self:
+        """Все tenant; использовать только при явной необходимости (например админ-задача)."""
+        new_state = replace(self._state, tenant_mode="all")
         return self._with_state(new_state)
 
     def with_deleted(self) -> Self:

@@ -18,6 +18,10 @@ class NotSoftDeleted(QueryForgeError, RuntimeError):
     """Восстановление записи, которая не была мягко удалена."""
 
 
+class MissingTenantError(QueryForgeError, RuntimeError):
+    """Нет tenant_id в контексте или не задан for_tenant() для tenant-scoped модели."""
+
+
 class ProjectionError(QueryForgeError, ValueError):
     """project()/into() не сопоставил DTO с колонками ORM (strict, смысл полей, nested)."""
 

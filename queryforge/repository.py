@@ -11,7 +11,12 @@ from sqlalchemy.exc import InvalidRequestError, NoInspectionAvailable
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from queryforge.audit import build_event, get_audit_context, schedule_audit_event
-from queryforge.exceptions import EntityNotFound, NotSoftDeleted
+from queryforge.exceptions import (
+    EntityNotFound,
+    MissingTenantError,
+    NotSoftDeleted,
+    QueryForgeError,
+)
 from queryforge.query import Query
 from queryforge.soft_delete import (
     hard_delete_in_db,
@@ -19,8 +24,20 @@ from queryforge.soft_delete import (
     restore_soft_deleted,
     soft_delete_in_db,
 )
+from queryforge.tenancy import get_tenant_id, has_tenant
 
 M = TypeVar("M", bound=Any)
+
+
+def _assert_current_tenant(model: type[Any], entity: Any) -> None:
+    if not has_tenant(model):
+        return
+    ctx = get_tenant_id()
+    if ctx is None:
+        msg = f"Для операций с {model.__name__} нужен TenantContext"
+        raise MissingTenantError(msg)
+    if getattr(entity, "tenant_id", None) != ctx:
+        raise EntityNotFound(f"{model.__name__} не в текущем tenant")
 
 
 def _id_for_audit(instance: Any) -> Any:
@@ -102,6 +119,13 @@ class Repository(Generic[M]):
             raise EntityNotFound(f"{self._model.__name__}({pk!r})")
         if has_soft_delete(self._model) and getattr(ent, "deleted_at", None) is not None:
             raise EntityNotFound(f"{self._model.__name__}({pk!r})")
+        if has_tenant(self._model):
+            ctx = get_tenant_id()
+            if ctx is None:
+                msg = f"Для get() tenant-scoped сущности {self._model.__name__} нужен TenantContext"
+                raise MissingTenantError(msg)
+            if getattr(ent, "tenant_id", None) != ctx:
+                raise EntityNotFound(f"{self._model.__name__}({pk!r})")
         return ent
 
     async def get_or_none(self, pk: Any) -> M | None:
@@ -119,6 +143,20 @@ class Repository(Generic[M]):
         return await q.exists()
 
     async def add(self, entity: M) -> None:
+        if has_tenant(self._model):
+            tid = getattr(entity, "tenant_id", None)
+            if tid is None:
+                ctx = get_tenant_id()
+                if ctx is None:
+                    msg = f"Укажите {self._model.__name__}.tenant_id или TenantContext"
+                    raise MissingTenantError(msg)
+                entity.tenant_id = ctx  # type: ignore[union-attr]
+            else:
+                ctx = get_tenant_id()
+                if ctx is not None and tid != ctx:
+                    raise EntityNotFound(
+                        f"{self._model.__name__}: tenant_id не совпадает с контекстом"
+                    )
         self._session.add(entity)
         await self._session.flush()
         eid = _id_for_audit(entity)
@@ -140,6 +178,7 @@ class Repository(Generic[M]):
         reason: str | None = None,
         deleted_by: str | int | bool | UUID | None = None,
     ) -> None:
+        _assert_current_tenant(self._model, entity)
         eid = _id_for_audit(entity)
         ctx = get_audit_context()
         old_snap = _entity_column_snapshot(entity)
@@ -163,6 +202,7 @@ class Repository(Generic[M]):
         )
 
     async def restore(self, entity: M) -> None:
+        _assert_current_tenant(self._model, entity)
         eid = _id_for_audit(entity)
         if not has_soft_delete(self._model):
             msg = f"{self._model.__name__} не поддерживает мягкое удаление"
@@ -181,6 +221,7 @@ class Repository(Generic[M]):
         )
 
     async def hard_delete(self, entity: M) -> None:
+        _assert_current_tenant(self._model, entity)
         eid = _id_for_audit(entity)
         old_snap = _entity_column_snapshot(entity)
         await hard_delete_in_db(self._session, entity)
@@ -195,6 +236,10 @@ class Repository(Generic[M]):
         )
 
     async def update(self, entity: M, **values: Any) -> None:
+        _assert_current_tenant(self._model, entity)
+        if has_tenant(self._model) and "tenant_id" in values:
+            msg = f"Поле tenant_id нельзя менять через update() для {self._model.__name__}"
+            raise QueryForgeError(msg)
         changes: dict[str, dict[str, Any]] = {}
         for k, v in values.items():
             if not hasattr(entity, k):

@@ -19,6 +19,7 @@ from queryforge.audit_storage import AuditStorageBackend, SQLAlchemyAuditStorage
 from queryforge.exceptions import (
     AlreadySoftDeleted,
     EntityNotFound,
+    MissingTenantError,
     NotSoftDeleted,
     ProjectionError,
     QueryForgeError,
@@ -35,6 +36,7 @@ from queryforge.soft_delete import (
     set_soft_delete_policy,
 )
 from queryforge.sorting import SortSet, asc, desc, sort_expressions
+from queryforge.tenancy import TenantContext, TenantMixin, get_tenant_id, has_tenant
 
 __all__ = [
     "FilterSet",
@@ -44,6 +46,10 @@ __all__ = [
     "Query",
     "QueryState",
     "Repository",
+    "TenantContext",
+    "TenantMixin",
+    "get_tenant_id",
+    "has_tenant",
     "SoftDeleteMixin",
     "is_soft_deleted",
     "set_soft_delete_policy",
@@ -54,6 +60,7 @@ __all__ = [
     "EntityNotFound",
     "AlreadySoftDeleted",
     "NotSoftDeleted",
+    "MissingTenantError",
     "ProjectionError",
     "ProjectionMode",
     "ProjectionNested",

@@ -17,6 +17,7 @@ from queryforge.exceptions import (
     NotSoftDeleted,
     QueryForgeError,
 )
+from queryforge.policy import ReadScope
 from queryforge.query import Query
 from queryforge.soft_delete import (
     hard_delete_in_db,
@@ -101,17 +102,34 @@ def _entity_column_snapshot(instance: Any) -> dict[str, Any]:
 
 
 class Repository(Generic[M]):
-    """Репозиторий: query(), get* и write с опциональным аудитом."""
+    """Репозиторий: query(), get* и write с опциональным аудитом.
 
-    def __init__(self, session: AsyncSession, model: type[M]) -> None:
+    ``read_scope`` задаёт политику по умолчанию для ``query().visible_for(user)``; к ``get`` /
+    ``get_or_none`` не применяется (по PK — отдельные проверки прав в приложении).
+    """
+
+    def __init__(
+        self,
+        session: AsyncSession,
+        model: type[M],
+        *,
+        read_scope: ReadScope | None = None,
+    ) -> None:
         self._session = session
         self._model = model
+        self._read_scope = read_scope
 
     def query(self) -> Query[M, M]:
-        return Query(self._session, self._model)
+        return Query(self._session, self._model, read_scope=self._read_scope)
 
     def from_statement(self, stmt: Select[Any]) -> Query[M, Any]:
-        return Query(self._session, self._model, from_statement=stmt, soft_mode="with_all")
+        return Query(
+            self._session,
+            self._model,
+            from_statement=stmt,
+            soft_mode="with_all",
+            read_scope=self._read_scope,
+        )
 
     async def get(self, pk: Any) -> M:
         ent = await self._session.get(self._model, pk)

@@ -19,6 +19,7 @@ from queryforge.audit_storage import AuditStorageBackend, SQLAlchemyAuditStorage
 from queryforge.exceptions import (
     AlreadySoftDeleted,
     EntityNotFound,
+    MissingPolicyError,
     MissingTenantError,
     NotSoftDeleted,
     ProjectionError,
@@ -26,6 +27,7 @@ from queryforge.exceptions import (
 )
 from queryforge.filters import FilterSet, contains, eq, gte, lte
 from queryforge.pagination import Page, offset_for_page
+from queryforge.policy import ModelReadPolicy, PolicyAction, ReadScope
 from queryforge.projection import ProjectionMode, ProjectionNested
 from queryforge.query import JoinOp, PaginateTerminal, Query, QueryState
 from queryforge.repository import Repository
@@ -60,8 +62,12 @@ __all__ = [
     "EntityNotFound",
     "AlreadySoftDeleted",
     "NotSoftDeleted",
+    "MissingPolicyError",
     "MissingTenantError",
+    "ModelReadPolicy",
+    "PolicyAction",
     "ProjectionError",
+    "ReadScope",
     "ProjectionMode",
     "ProjectionNested",
     "contains",

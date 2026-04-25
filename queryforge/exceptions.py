@@ -22,6 +22,10 @@ class MissingTenantError(QueryForgeError, RuntimeError):
     """Нет tenant_id в контексте или не задан for_tenant() для tenant-scoped модели."""
 
 
+class MissingPolicyError(QueryForgeError, RuntimeError):
+    """Нет `read_scope` в `Repository` — передайте политику по умолчанию для `visible_for()`."""
+
+
 class ProjectionError(QueryForgeError, ValueError):
     """project()/into() не сопоставил DTO с колонками ORM (strict, смысл полей, nested)."""
 

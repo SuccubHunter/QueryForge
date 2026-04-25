@@ -13,8 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute, joinedload, selectinload
 from sqlalchemy.sql import ColumnElement
 
-from queryforge.exceptions import MissingTenantError
+from queryforge.exceptions import MissingPolicyError, MissingTenantError
 from queryforge.pagination import Page, offset_for_page
+from queryforge.policy import PolicyAction, ReadScope
 from queryforge.projection import (
     ProjectionMode,
     ProjectionNested,
@@ -82,6 +83,7 @@ class QueryState:
     loader_options: tuple[Any, ...] = ()
     tenant_mode: Literal["default", "all"] = "default"
     tenant_scope: uuid.UUID | str | int | None = None
+    read_scope: ReadScope | None = None
 
 
 def _as_where_clause(
@@ -116,6 +118,7 @@ class Query(Generic[ModelT, ResultT]):
         _unwrap_scalar: bool = False,
         _projection_mode: ProjectionMode = "strict",
         _projection_nested: ProjectionNested = "forbid",
+        read_scope: ReadScope | None = None,
     ) -> None:
         self._session = session
         self._model: type[ModelT] = model
@@ -131,6 +134,7 @@ class Query(Generic[ModelT, ResultT]):
                 projection_mode=_projection_mode,
                 projection_nested=_projection_nested,
                 tenant_mode="all" if from_statement is not None else "default",
+                read_scope=read_scope,
             )
 
     def _map_soft_mode(self) -> SoftDeleteMode:
@@ -316,6 +320,18 @@ class Query(Generic[ModelT, ResultT]):
         """Все tenant; использовать только при явной необходимости (например админ-задача)."""
         new_state = replace(self._state, tenant_mode="all")
         return self._with_state(new_state)
+
+    def visible_for(self, user: Any) -> Self:
+        """Фильтр по политике репозитория: ``read_scope`` в ``Repository(...)``."""
+        fn = self._state.read_scope
+        if fn is None:
+            msg = "visible_for: не задан read_scope в Repository(..., read_scope=...)"
+            raise MissingPolicyError(msg)
+        return self.where(fn(self._model, user))
+
+    def allowed_by(self, action: PolicyAction, user: Any) -> Self:
+        """Фильтр по действию, например ``allowed_by(UserPolicy.read, current_user)``."""
+        return self.where(action(user))
 
     def with_deleted(self) -> Self:
         new_state = replace(self._state, soft_mode="with_all")

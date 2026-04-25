@@ -58,6 +58,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.ruff.lint.per-file-ignores]
 "queryforge/fastapi.py" = ["B008"]
 "tests/test_fastapi_dep.py" = ["B008"]
+"tests/test_policy_rbac.py" = ["B008"]
 "examples/queryforge-demo/app/api/users.py" = ["B008"]
 
 [tool.pytest.ini_options]

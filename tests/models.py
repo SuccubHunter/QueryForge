@@ -49,6 +49,16 @@ class Profile(Base):
     user: Mapped[User] = relationship(back_populates="profile")
 
 
+class OwnedItem(Base):
+    """Строки с владельцем — для тестов policy / RBAC."""
+
+    __tablename__ = "owned_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    owner_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    label: Mapped[str] = mapped_column(String(64))
+
+
 class TenantItem(TenantMixin, Base):
     """Сущность только с tenant (без soft delete) для тестов multi-tenancy."""
 

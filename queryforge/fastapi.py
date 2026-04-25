@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Depends, Query
 from queryforge.filters import FilterSet
 from queryforge.pagination import Page
+from queryforge.policy import ReadScope
 from queryforge.repository import Repository
 from queryforge.sorting import SortSetBase
 
@@ -41,8 +42,14 @@ def repo(
     model: type[M],
     *,
     session_dep: Any | None = None,
+    read_scope: ReadScope | None = None,
 ) -> Any:
-    """Session -> Repository. Пример: ``Depends(repo(User, session_dep=get_session))``."""
+    """Session -> Repository. Пример: ``Depends(repo(User, session_dep=get_session))``.
+
+    Для ``query().visible_for(current_user)`` укажите ``read_scope`` (см. ``queryforge.policy``).
+    В обработчике: ``user = Depends(get_current_user)``, затем
+    ``await repo.query().visible_for(user).to_list()``.
+    """
     dep = session_dep or _default_session_dep
     if dep is None:
         msg = "Укажите session_dep=... в repo() или set_session_dep(Depends get_session)."
@@ -51,7 +58,7 @@ def repo(
     async def _inner(
         session: AsyncSession = Depends(dep),  # noqa: B008
     ) -> Repository[M]:
-        return Repository(session, model)
+        return Repository(session, model, read_scope=read_scope)
 
     return _inner
 

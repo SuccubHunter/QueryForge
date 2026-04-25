@@ -5,11 +5,11 @@ import datetime
 import uuid
 
 import pytest
-from queryforge import Repository
+from queryforge import QueryForgeError, Repository
 from sqlalchemy import select
 from sqlalchemy.exc import InvalidRequestError
 
-from tests.models import Order, Profile, User, UserStatus
+from tests.models import Order, Profile, User, UserRead, UserStatus
 
 
 async def _user_with_children(session) -> User:
@@ -83,6 +83,30 @@ async def test_count_ignores_loader_options(session) -> None:
     repo = Repository(session, User)
     c = await repo.query().selectin(User.orders).count()
     assert c == 1
+
+
+@pytest.mark.asyncio
+async def test_count_entity_with_join_counts_distinct_pk(session) -> None:
+    await _user_with_children(session)
+    repo = Repository(session, User)
+    c = await repo.query().join(User.orders).count()
+    assert c == 1
+
+
+@pytest.mark.asyncio
+async def test_include_with_project_raises_clear_error(session) -> None:
+    await _user_with_children(session)
+    repo = Repository(session, User)
+    with pytest.raises(QueryForgeError, match="only with entity result queries"):
+        await repo.query().project(UserRead).include(User.orders).to_list()
+
+
+@pytest.mark.asyncio
+async def test_include_with_select_raises_clear_error(session) -> None:
+    await _user_with_children(session)
+    repo = Repository(session, User)
+    with pytest.raises(QueryForgeError, match="only with entity result queries"):
+        await repo.query().select(User.email).include(User.orders).to_list()
 
 
 @pytest.mark.asyncio

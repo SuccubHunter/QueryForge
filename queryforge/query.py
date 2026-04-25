@@ -8,12 +8,12 @@ from dataclasses import dataclass, replace
 from typing import Any, Generic, Literal, Self, TypeVar, cast, overload
 
 from pydantic import BaseModel
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute, joinedload, selectinload
 from sqlalchemy.sql import ColumnElement
 
-from queryforge.exceptions import MissingPolicyError, MissingTenantError
+from queryforge.exceptions import MissingPolicyError, MissingTenantError, QueryForgeError
 from queryforge.pagination import Page, offset_for_page
 from queryforge.policy import PolicyAction, ReadScope
 from queryforge.projection import (
@@ -45,6 +45,7 @@ T10 = TypeVar("T10")
 TValue = TypeVar("TValue")
 
 WhereInput = ColumnElement[bool] | Callable[[], ColumnElement[bool]]
+ResultMode = Literal["entity", "projection", "tuple", "scalar"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +85,7 @@ class QueryState:
     tenant_mode: Literal["default", "all"] = "default"
     tenant_scope: uuid.UUID | str | int | None = None
     read_scope: ReadScope | None = None
+    result_mode: ResultMode = "entity"
 
 
 def _as_where_clause(
@@ -172,7 +174,9 @@ class Query(Generic[ModelT, ResultT]):
     def _all_wheres(self) -> list[ColumnElement[bool]]:
         return [*self._state.wheres, *self._soft_wheres(), *self._tenant_wheres()]
 
-    def _build_base_select(self, *, with_loader_options: bool = True) -> Select[Any]:
+    def _build_base_select(
+        self, *, with_loader_options: bool = True, with_order: bool = True
+    ) -> Select[Any]:
         st = self._state
         if st.raw is not None:
             s = st.raw
@@ -192,8 +196,9 @@ class Query(Generic[ModelT, ResultT]):
             s = s.join(*op.args, **dict(op.join_kwargs))
         for w in self._all_wheres():
             s = s.where(w)
-        for o in st.order:
-            s = s.order_by(o)  # type: ignore[call-overload]
+        if with_order:
+            for o in st.order:
+                s = s.order_by(o)  # type: ignore[call-overload]
         if with_loader_options and st.loader_options:
             s = s.options(*st.loader_options)
         return s
@@ -208,7 +213,17 @@ class Query(Generic[ModelT, ResultT]):
         return s
 
     def _count_select(self) -> Select[Any]:
-        inner = self._build_base_select(with_loader_options=False)
+        st = self._state
+        if st.result_mode == "entity" and st.joins:
+            mapper = inspect(self._model)
+            pks = tuple(getattr(self._model, col.key) for col in mapper.primary_key)
+            inner = (
+                self._build_base_select(with_loader_options=False, with_order=False)
+                .with_only_columns(*pks)
+                .distinct()
+            )
+            return select(func.count()).select_from(inner.subquery())  # type: ignore[return-value,arg-type]
+        inner = self._build_base_select(with_loader_options=False, with_order=False)
         return select(func.count()).select_from(inner.subquery())  # type: ignore[return-value,arg-type]
 
     @property
@@ -259,6 +274,7 @@ class Query(Generic[ModelT, ResultT]):
         """``options(selectinload(...))``."""
         if not keys:
             return self
+        self._assert_entity_mode_for_loader_options()
         extra = tuple(selectinload(k) for k in keys)
         new_state = replace(self._state, loader_options=(*self._state.loader_options, *extra))
         return self._with_state(new_state)
@@ -267,9 +283,15 @@ class Query(Generic[ModelT, ResultT]):
         """``options(joinedload(...))`` — одним JOIN-ом в основном запросе."""
         if not keys:
             return self
+        self._assert_entity_mode_for_loader_options()
         extra = tuple(joinedload(k) for k in keys)
         new_state = replace(self._state, loader_options=(*self._state.loader_options, *extra))
         return self._with_state(new_state)
+
+    def _assert_entity_mode_for_loader_options(self) -> None:
+        if self._state.result_mode != "entity":
+            msg = "include/selectin/joined can be used only with entity result queries"
+            raise QueryForgeError(msg)
 
     def order_by(self, *criterion: Any) -> Self:
         if not criterion:
@@ -360,6 +382,15 @@ class Query(Generic[ModelT, ResultT]):
             projection_nested=projection_nested
             if projection_nested is not None
             else st.projection_nested,
+            result_mode=(
+                "projection"
+                if projection is not None
+                else "scalar"
+                if unwrap_scalar
+                else "tuple"
+                if explicit_cols is not None
+                else st.result_mode
+            ),
         )
         return Query(self._session, self._model, state=new_state)
 
@@ -526,6 +557,7 @@ class Query(Generic[ModelT, ResultT]):
             explicit_cols=entities,
             projection=None,
             unwrap_scalar=unwrap_scalar,
+            result_mode="scalar" if unwrap_scalar else "tuple",
         )
         return Query(self._session, self._model, state=new_state)
 

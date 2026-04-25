@@ -253,7 +253,7 @@ class Repository(Generic[M]):
             ),
         )
 
-    async def update(self, entity: M, **values: Any) -> None:
+    async def update(self, entity: M, *, strict: bool = True, **values: Any) -> None:
         _assert_current_tenant(self._model, entity)
         if has_tenant(self._model) and "tenant_id" in values:
             msg = f"Поле tenant_id нельзя менять через update() для {self._model.__name__}"
@@ -261,6 +261,9 @@ class Repository(Generic[M]):
         changes: dict[str, dict[str, Any]] = {}
         for k, v in values.items():
             if not hasattr(entity, k):
+                if strict:
+                    msg = f"Неизвестное поле для update(): {self._model.__name__}.{k}"
+                    raise QueryForgeError(msg)
                 continue
             old = getattr(entity, k)
             if old != v:

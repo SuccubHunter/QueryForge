@@ -10,6 +10,7 @@ from queryforge import (
     AlreadySoftDeleted,
     EntityNotFound,
     NotSoftDeleted,
+    QueryForgeError,
     Repository,
     add_audit_listener,
     remove_audit_listener,
@@ -66,6 +67,22 @@ async def test_update_emits_and_changes(session) -> None:
     repo = Repository(session, User)
     await repo.update(u, email="n@b.com")
     assert u.email == "n@b.com"
+
+
+@pytest.mark.asyncio
+async def test_update_unknown_field_raises_in_strict_mode(session) -> None:
+    u = await _user(session)
+    repo = Repository(session, User)
+    with pytest.raises(QueryForgeError, match="Неизвестное поле"):
+        await repo.update(u, emali="n@b.com")
+
+
+@pytest.mark.asyncio
+async def test_update_unknown_field_allowed_in_loose_mode(session) -> None:
+    u = await _user(session)
+    repo = Repository(session, User)
+    await repo.update(u, strict=False, emali="n@b.com")
+    assert u.email == "a@b.com"
 
 
 @pytest.mark.asyncio

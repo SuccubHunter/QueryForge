@@ -77,3 +77,42 @@ async def test_project_user_read(session) -> None:
     assert len(rows) == 1
     assert isinstance(rows[0], UserRead)
     assert rows[0].email == "u0@e.com"
+
+
+@pytest.mark.asyncio
+async def test_first_does_not_mutate_base_query(session) -> None:
+    await _seed(session, 5)
+    repo = Repository(session, User)
+    q = repo.query()
+    _ = await q.first()
+    all_rows = await q.to_list()
+    assert len(all_rows) == 5
+
+
+@pytest.mark.asyncio
+async def test_paginate_does_not_mutate_base_query(session) -> None:
+    await _seed(session, 5)
+    repo = Repository(session, User)
+    q = repo.query().order_by(User.email.asc())
+    _ = await q.paginate(page=1, size=2)
+    total = await q.count()
+    assert total == 5
+    all_rows = await q.to_list()
+    assert len(all_rows) == 5
+
+
+@pytest.mark.asyncio
+async def test_chained_queries_are_independent(session) -> None:
+    await _seed(session, 3)
+    repo = Repository(session, User)
+    q0 = repo.query()
+    q1 = q0.where(User.age >= 19)
+    q2 = q1.limit(1)
+    assert q0 is not q1
+    assert q1 is not q2
+    c0 = await q0.count()
+    c1 = await q1.count()
+    assert c0 == 3
+    assert c1 == 2
+    rows2 = await q2.to_list()
+    assert len(rows2) == 1

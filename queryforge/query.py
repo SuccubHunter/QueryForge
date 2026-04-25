@@ -9,7 +9,7 @@ from typing import Any, Generic, Self, TypeVar, cast, overload
 from pydantic import BaseModel
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import InstrumentedAttribute
+from sqlalchemy.orm import InstrumentedAttribute, joinedload, selectinload
 from sqlalchemy.sql import ColumnElement
 
 from queryforge.pagination import Page, offset_for_page
@@ -44,6 +44,23 @@ WhereInput = ColumnElement[bool] | Callable[[], ColumnElement[bool]]
 
 
 @dataclass(frozen=True, slots=True)
+class JoinOp:
+    """Один вызов ``Select.join`` (args + isouter/full)."""
+
+    args: tuple[Any, ...]
+    join_kwargs: tuple[tuple[str, Any], ...] = ()
+
+    @classmethod
+    def from_join(cls, *args: Any, isouter: bool = False, full: bool = False) -> JoinOp:
+        jkw: list[tuple[str, Any]] = []
+        if isouter:
+            jkw.append(("isouter", True))
+        if full:
+            jkw.append(("full", True))
+        return cls(args=tuple(args), join_kwargs=tuple(jkw))
+
+
+@dataclass(frozen=True, slots=True)
 class QueryState:
     """Неизменяемое состояние конвейера Query (where / order / limit / projection / …)."""
 
@@ -58,6 +75,8 @@ class QueryState:
     unwrap_scalar: bool = False
     projection_mode: ProjectionMode = "strict"
     projection_nested: ProjectionNested = "forbid"
+    joins: tuple[JoinOp, ...] = ()
+    loader_options: tuple[Any, ...] = ()
 
 
 def _as_where_clause(
@@ -124,7 +143,7 @@ class Query(Generic[ModelT, ResultT]):
     def _all_wheres(self) -> list[ColumnElement[bool]]:
         return [*self._state.wheres, *self._soft_wheres()]
 
-    def _build_base_select(self) -> Select[Any]:
+    def _build_base_select(self, *, with_loader_options: bool = True) -> Select[Any]:
         st = self._state
         if st.raw is not None:
             s = st.raw
@@ -140,10 +159,14 @@ class Query(Generic[ModelT, ResultT]):
             s = select(*cols)  # type: ignore[call-overload,arg-type]
         else:
             s = select(self._model)  # type: ignore[call-overload]
+        for op in st.joins:
+            s = s.join(*op.args, **dict(op.join_kwargs))
         for w in self._all_wheres():
             s = s.where(w)
         for o in st.order:
             s = s.order_by(o)  # type: ignore[call-overload]
+        if with_loader_options and st.loader_options:
+            s = s.options(*st.loader_options)
         return s
 
     def _build_select_paginated(self) -> Select[Any]:
@@ -156,7 +179,7 @@ class Query(Generic[ModelT, ResultT]):
         return s
 
     def _count_select(self) -> Select[Any]:
-        inner = self._build_base_select()
+        inner = self._build_base_select(with_loader_options=False)
         return select(func.count()).select_from(inner.subquery())  # type: ignore[return-value,arg-type]
 
     @property
@@ -189,6 +212,34 @@ class Query(Generic[ModelT, ResultT]):
             return self
         extra = tuple(_as_where_clause(c) for c in clauses)
         new_state = replace(self._state, wheres=(*self._state.wheres, *extra))
+        return self._with_state(new_state)
+
+    def join(self, *args: Any, isouter: bool = False, full: bool = False) -> Self:
+        """``stmt.join(...)`` — связь, цель ON или (target, onclause) как в SQLAlchemy."""
+        if not args:
+            return self
+        op = JoinOp.from_join(*args, isouter=isouter, full=full)
+        new_state = replace(self._state, joins=(*self._state.joins, op))
+        return self._with_state(new_state)
+
+    def include(self, *keys: Any) -> Self:
+        """Eager: ``selectinload`` — то же, что ``selectin()`` (удобный алиас)."""
+        return self.selectin(*keys)
+
+    def selectin(self, *keys: Any) -> Self:
+        """``options(selectinload(...))``."""
+        if not keys:
+            return self
+        extra = tuple(selectinload(k) for k in keys)
+        new_state = replace(self._state, loader_options=(*self._state.loader_options, *extra))
+        return self._with_state(new_state)
+
+    def joined(self, *keys: Any) -> Self:
+        """``options(joinedload(...))`` — одним JOIN-ом в основном запросе."""
+        if not keys:
+            return self
+        extra = tuple(joinedload(k) for k in keys)
+        new_state = replace(self._state, loader_options=(*self._state.loader_options, *extra))
         return self._with_state(new_state)
 
     def order_by(self, *criterion: Any) -> Self:
@@ -479,7 +530,7 @@ class Query(Generic[ModelT, ResultT]):
         return int(res.scalar_one())
 
     async def exists(self) -> bool:
-        stmt = self._build_base_select().limit(1)
+        stmt = self._build_base_select(with_loader_options=False).limit(1)
         res = await self._session.execute(stmt)
         st = self._state
         if st.projection is not None or st.explicit_cols is not None or st.raw is not None:

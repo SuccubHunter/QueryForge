@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Generator, Iterable
+from dataclasses import dataclass, replace
 from typing import Any, Generic, Self, TypeVar, cast, overload
 
 from pydantic import BaseModel
@@ -37,6 +38,21 @@ TValue = TypeVar("TValue")
 WhereInput = ColumnElement[bool] | Callable[[], ColumnElement[bool]]
 
 
+@dataclass(frozen=True, slots=True)
+class QueryState:
+    """Неизменяемое состояние конвейера Query (where / order / limit / projection / …)."""
+
+    wheres: tuple[ColumnElement[bool], ...] = ()
+    order: tuple[Any, ...] = ()
+    limit: int | None = None
+    offset: int | None = None
+    raw: Select[Any] | None = None
+    soft_mode: SoftDeleteMode = "default"
+    projection: type[BaseModel] | None = None
+    explicit_cols: tuple[Any, ...] | None = None
+    unwrap_scalar: bool = False
+
+
 def _as_where_clause(
     c: WhereInput,
 ) -> ColumnElement[bool]:
@@ -49,56 +65,65 @@ def _as_where_clause(
 
 
 class Query(Generic[ModelT, ResultT]):
-    """Конвейер поверх select(); терминалы выполняют async execute."""
+    """Конвейер поверх select(); терминалы выполняют async execute.
+
+    Состояние неизменяемое: `where` / `order_by` / `limit` / `project` / `select` и т.д.
+    возвращают новый `Query`, исходный объект не меняется. Для накопления условий
+    используйте цепочку или переприсование: `q = q.where(...)`.
+    """
 
     def __init__(
         self,
         session: AsyncSession,
         model: type[ModelT],
         *,
+        state: QueryState | None = None,
         from_statement: Select[Any] | None = None,
         soft_mode: SoftDeleteMode = "default",
         projection: type[BaseModel] | None = None,
-        _explicit_cols: list[Any] | None = None,
+        _explicit_cols: tuple[Any, ...] | None = None,
         _unwrap_scalar: bool = False,
     ) -> None:
         self._session = session
         self._model: type[ModelT] = model
-        self._wheres: list[ColumnElement[bool]] = []
-        self._order: list[Any] = []
-        self._limit: int | None = None
-        self._offset: int | None = None
-        self._raw: Select[Any] | None = from_statement
-        self._soft_mode: SoftDeleteMode = soft_mode
-        self._projection: type[BaseModel] | None = projection
-        self._explicit_cols: list[Any] | None = _explicit_cols
-        self._unwrap_scalar: bool = _unwrap_scalar
+        if state is not None:
+            self._state = state
+        else:
+            self._state = QueryState(
+                raw=from_statement,
+                soft_mode=soft_mode,
+                projection=projection,
+                explicit_cols=_explicit_cols,
+                unwrap_scalar=_unwrap_scalar,
+            )
 
     def _map_soft_mode(self) -> SoftDeleteMode:
-        if self._soft_mode == "default":
+        st = self._state.soft_mode
+        if st == "default":
             return "default"
-        if self._soft_mode == "with_all":
+        if st == "with_all":
             return "with_all"
         return "only_deleted"
 
     def _soft_wheres(self) -> list[ColumnElement[bool]]:
-        if self._raw is not None or not has_soft_delete(self._model):
+        if self._state.raw is not None or not has_soft_delete(self._model):
             return []
         return list(soft_delete_clause_for_mode(self._model, self._map_soft_mode()))
 
     def _all_wheres(self) -> list[ColumnElement[bool]]:
-        return [*self._wheres, *self._soft_wheres()]
+        return [*self._state.wheres, *self._soft_wheres()]
 
     def _build_base_select(self) -> Select[Any]:
-        if self._raw is not None:
-            s = self._raw
-        elif self._explicit_cols is not None:
-            s = select(*self._explicit_cols)  # type: ignore[arg-type]
-        elif self._projection is not None:
-            cols = pydantic_model_columns(self._model, self._projection)
+        st = self._state
+        if st.raw is not None:
+            s = st.raw
+        elif st.explicit_cols is not None:
+            s = select(*st.explicit_cols)  # type: ignore[arg-type]
+        elif st.projection is not None:
+            cols = pydantic_model_columns(self._model, st.projection)
             if not cols:
                 msg = (
-                    f"project({self._projection.__name__}): нет совпадений полей DTO с колонками "
+                    f"project({st.projection.__name__}): нет совпадений полей DTO с колонками "
                     f"модели {getattr(self._model, '__name__', self._model)}. "
                     "Имена полей Pydantic должны соответствовать mapped-атрибутам."
                 )
@@ -108,16 +133,17 @@ class Query(Generic[ModelT, ResultT]):
             s = select(self._model)  # type: ignore[call-overload]
         for w in self._all_wheres():
             s = s.where(w)
-        for o in self._order:
+        for o in st.order:
             s = s.order_by(o)  # type: ignore[call-overload]
         return s
 
     def _build_select_paginated(self) -> Select[Any]:
         s = self._build_base_select()
-        if self._offset is not None:
-            s = s.offset(self._offset)
-        if self._limit is not None:
-            s = s.limit(self._limit)
+        st = self._state
+        if st.offset is not None:
+            s = s.offset(st.offset)
+        if st.limit is not None:
+            s = s.limit(st.limit)
         return s
 
     def _count_select(self) -> Select[Any]:
@@ -128,10 +154,17 @@ class Query(Generic[ModelT, ResultT]):
     def statement(self) -> Select[Any]:
         return self._build_select_paginated()
 
+    def _with_state(self, new_state: QueryState) -> Self:
+        return cast(
+            Self,
+            Query(self._session, self._model, state=new_state),
+        )
+
     def where(self, *clauses: ColumnElement[bool]) -> Self:
-        for c in clauses:
-            self._wheres.append(c)
-        return self
+        if not clauses:
+            return self
+        new_state = replace(self._state, wheres=(*self._state.wheres, *clauses))
+        return self._with_state(new_state)
 
     def where_if(self, condition: object, *clauses: WhereInput) -> Self:
         """Добавляет where только если condition истинно.
@@ -143,13 +176,17 @@ class Query(Generic[ModelT, ResultT]):
         """
         if not condition:
             return self
-        for c in clauses:
-            self._wheres.append(_as_where_clause(c))
-        return self
+        if not clauses:
+            return self
+        extra = tuple(_as_where_clause(c) for c in clauses)
+        new_state = replace(self._state, wheres=(*self._state.wheres, *extra))
+        return self._with_state(new_state)
 
     def order_by(self, *criterion: Any) -> Self:
-        self._order.extend(criterion)
-        return self
+        if not criterion:
+            return self
+        new_state = replace(self._state, order=(*self._state.order, *criterion))
+        return self._with_state(new_state)
 
     def sort(
         self,
@@ -164,49 +201,45 @@ class Query(Generic[ModelT, ResultT]):
         return self.order_by(*acc)
 
     def limit(self, n: int) -> Self:
-        self._limit = n
-        return self
+        new_state = replace(self._state, limit=n)
+        return self._with_state(new_state)
 
     def offset(self, n: int) -> Self:
-        self._offset = n
-        return self
+        new_state = replace(self._state, offset=n)
+        return self._with_state(new_state)
 
     def apply(self, filter_set: object) -> Self:
         wfn = getattr(filter_set, "_non_null_wheres", None)
-        if callable(wfn):
-            for w in cast("Iterable[ColumnElement[bool]]", wfn()):
-                self._wheres.append(w)
-        return self
+        if not callable(wfn):
+            return self
+        extra = tuple(cast("Iterable[ColumnElement[bool]]", wfn()))
+        if not extra:
+            return self
+        new_state = replace(self._state, wheres=(*self._state.wheres, *extra))
+        return self._with_state(new_state)
 
     def with_deleted(self) -> Self:
-        self._soft_mode = "with_all"
-        return self
+        new_state = replace(self._state, soft_mode="with_all")
+        return self._with_state(new_state)
 
     def only_deleted(self) -> Self:
-        self._soft_mode = "only_deleted"
-        return self
+        new_state = replace(self._state, soft_mode="only_deleted")
+        return self._with_state(new_state)
 
     def _copy_to_result(
         self,
         *,
         projection: type[BaseModel] | None,
-        explicit_cols: list[Any] | None,
+        explicit_cols: tuple[Any, ...] | None,
         unwrap_scalar: bool = False,
     ) -> Query[ModelT, Any]:
-        q: Query[ModelT, Any] = Query(
-            self._session,
-            self._model,
-            from_statement=self._raw,
-            soft_mode=self._soft_mode,
+        new_state = replace(
+            self._state,
             projection=projection,
-            _explicit_cols=explicit_cols,
-            _unwrap_scalar=unwrap_scalar,
+            explicit_cols=explicit_cols,
+            unwrap_scalar=unwrap_scalar,
         )
-        q._wheres = list(self._wheres)
-        q._order = list(self._order)
-        q._limit = self._limit
-        q._offset = self._offset
-        return q
+        return Query(self._session, self._model, state=new_state)
 
     def project(self, dto: type[DtoT]) -> Query[ModelT, DtoT]:
         return cast(
@@ -215,11 +248,13 @@ class Query(Generic[ModelT, ResultT]):
         )
 
     def into(self, dto: type[DtoT]) -> Query[ModelT, DtoT]:
-        cols = list(self._explicit_cols) if self._explicit_cols is not None else None
+        cols = self._state.explicit_cols
         return cast(
             "Query[ModelT, DtoT]",
             self._copy_to_result(
-                projection=dto, explicit_cols=cols, unwrap_scalar=self._unwrap_scalar
+                projection=dto,
+                explicit_cols=cols,
+                unwrap_scalar=self._state.unwrap_scalar,
             ),
         )
 
@@ -351,20 +386,15 @@ class Query(Generic[ModelT, ResultT]):
     def _select_explicit(
         self, entities: tuple[Any, ...], *, unwrap_scalar: bool
     ) -> Query[ModelT, Any]:
-        q: Query[ModelT, Any] = Query(
-            self._session,
-            self._model,
-            soft_mode=self._soft_mode,
-            from_statement=None,
-            _unwrap_scalar=unwrap_scalar,
+        # Явные колонки — новый путь; не тянем сырой from_statement, иначе приоритет у raw
+        new_state = replace(
+            self._state,
+            raw=None,
+            explicit_cols=entities,
+            projection=None,
+            unwrap_scalar=unwrap_scalar,
         )
-        q._wheres = list(self._wheres)
-        q._order = list(self._order)
-        # Явные колонки — новый путь; не тянем сырой from_statement, иначе приоритет у _raw
-        q._raw = None
-        q._explicit_cols = list(entities)
-        q._projection = None
-        return q
+        return Query(self._session, self._model, state=new_state)
 
     def paginate(
         self,
@@ -376,13 +406,14 @@ class Query(Generic[ModelT, ResultT]):
     async def to_list(self) -> list[ResultT]:
         stmt = self._build_select_paginated()
         res = await self._session.execute(stmt)
-        if self._projection is not None:
-            out = [row_to_pydantic(self._projection, m) for m in res.mappings().all()]
+        st = self._state
+        if st.projection is not None:
+            out = [row_to_pydantic(st.projection, m) for m in res.mappings().all()]
             return cast("list[ResultT]", out)
-        if self._explicit_cols is not None:
+        if st.explicit_cols is not None:
             rows = res.all()
-            # _unwrap_scalar: select_value снимает скаляр; select — кортежи полей
-            out = [r[0] for r in rows] if self._unwrap_scalar else [tuple(r) for r in rows]
+            # unwrap_scalar: select_value снимает скаляр; select — кортежи полей
+            out = [r[0] for r in rows] if st.unwrap_scalar else [tuple(r) for r in rows]
             return cast("list[ResultT]", out)
         out = list(res.scalars().unique().all())
         return cast("list[ResultT]", out)
@@ -423,7 +454,8 @@ class Query(Generic[ModelT, ResultT]):
     async def exists(self) -> bool:
         stmt = self._build_base_select().limit(1)
         res = await self._session.execute(stmt)
-        if self._projection is not None or self._explicit_cols is not None or self._raw is not None:
+        st = self._state
+        if st.projection is not None or st.explicit_cols is not None or st.raw is not None:
             return res.first() is not None
         return res.scalars().first() is not None
 

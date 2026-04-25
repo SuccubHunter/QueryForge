@@ -12,7 +12,7 @@ from queryforge.audit import (
 from queryforge.exceptions import EntityNotFound, QueryForgeError
 from queryforge.filters import FilterSet, contains, eq, gte, lte
 from queryforge.pagination import Page, offset_for_page
-from queryforge.query import PaginateTerminal, Query
+from queryforge.query import PaginateTerminal, Query, QueryState
 from queryforge.repository import Repository
 from queryforge.soft_delete import SoftDeleteMixin
 from queryforge.sorting import SortSet, asc, desc, sort_expressions
@@ -22,6 +22,7 @@ __all__ = [
     "Page",
     "PaginateTerminal",
     "Query",
+    "QueryState",
     "Repository",
     "SoftDeleteMixin",
     "SortSet",

@@ -13,7 +13,12 @@ from sqlalchemy.orm import InstrumentedAttribute
 from sqlalchemy.sql import ColumnElement
 
 from queryforge.pagination import Page, offset_for_page
-from queryforge.projection import pydantic_model_columns, row_to_pydantic
+from queryforge.projection import (
+    ProjectionMode,
+    ProjectionNested,
+    pydantic_model_columns,
+    row_to_pydantic,
+)
 from queryforge.soft_delete import (
     SoftDeleteMode,
     has_soft_delete,
@@ -51,6 +56,8 @@ class QueryState:
     projection: type[BaseModel] | None = None
     explicit_cols: tuple[Any, ...] | None = None
     unwrap_scalar: bool = False
+    projection_mode: ProjectionMode = "strict"
+    projection_nested: ProjectionNested = "forbid"
 
 
 def _as_where_clause(
@@ -83,6 +90,8 @@ class Query(Generic[ModelT, ResultT]):
         projection: type[BaseModel] | None = None,
         _explicit_cols: tuple[Any, ...] | None = None,
         _unwrap_scalar: bool = False,
+        _projection_mode: ProjectionMode = "strict",
+        _projection_nested: ProjectionNested = "forbid",
     ) -> None:
         self._session = session
         self._model: type[ModelT] = model
@@ -95,6 +104,8 @@ class Query(Generic[ModelT, ResultT]):
                 projection=projection,
                 explicit_cols=_explicit_cols,
                 unwrap_scalar=_unwrap_scalar,
+                projection_mode=_projection_mode,
+                projection_nested=_projection_nested,
             )
 
     def _map_soft_mode(self) -> SoftDeleteMode:
@@ -120,14 +131,12 @@ class Query(Generic[ModelT, ResultT]):
         elif st.explicit_cols is not None:
             s = select(*st.explicit_cols)  # type: ignore[arg-type]
         elif st.projection is not None:
-            cols = pydantic_model_columns(self._model, st.projection)
-            if not cols:
-                msg = (
-                    f"project({st.projection.__name__}): нет совпадений полей DTO с колонками "
-                    f"модели {getattr(self._model, '__name__', self._model)}. "
-                    "Имена полей Pydantic должны соответствовать mapped-атрибутам."
-                )
-                raise ValueError(msg)
+            cols = pydantic_model_columns(
+                self._model,
+                st.projection,
+                mode=st.projection_mode,
+                nested=st.projection_nested,
+            )
             s = select(*cols)  # type: ignore[call-overload,arg-type]
         else:
             s = select(self._model)  # type: ignore[call-overload]
@@ -232,19 +241,37 @@ class Query(Generic[ModelT, ResultT]):
         projection: type[BaseModel] | None,
         explicit_cols: tuple[Any, ...] | None,
         unwrap_scalar: bool = False,
+        projection_mode: ProjectionMode | None = None,
+        projection_nested: ProjectionNested | None = None,
     ) -> Query[ModelT, Any]:
+        st = self._state
         new_state = replace(
-            self._state,
+            st,
             projection=projection,
             explicit_cols=explicit_cols,
             unwrap_scalar=unwrap_scalar,
+            projection_mode=projection_mode if projection_mode is not None else st.projection_mode,
+            projection_nested=projection_nested
+            if projection_nested is not None
+            else st.projection_nested,
         )
         return Query(self._session, self._model, state=new_state)
 
-    def project(self, dto: type[DtoT]) -> Query[ModelT, DtoT]:
+    def project(
+        self,
+        dto: type[DtoT],
+        *,
+        mode: ProjectionMode = "strict",
+        nested: ProjectionNested = "forbid",
+    ) -> Query[ModelT, DtoT]:
         return cast(
             "Query[ModelT, DtoT]",
-            self._copy_to_result(projection=dto, explicit_cols=None),
+            self._copy_to_result(
+                projection=dto,
+                explicit_cols=None,
+                projection_mode=mode,
+                projection_nested=nested,
+            ),
         )
 
     def into(self, dto: type[DtoT]) -> Query[ModelT, DtoT]:

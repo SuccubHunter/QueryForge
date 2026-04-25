@@ -9,9 +9,10 @@ from queryforge.audit import (
     get_audit_context,
     remove_audit_listener,
 )
-from queryforge.exceptions import EntityNotFound, QueryForgeError
+from queryforge.exceptions import EntityNotFound, ProjectionError, QueryForgeError
 from queryforge.filters import FilterSet, contains, eq, gte, lte
 from queryforge.pagination import Page, offset_for_page
+from queryforge.projection import ProjectionMode, ProjectionNested
 from queryforge.query import PaginateTerminal, Query, QueryState
 from queryforge.repository import Repository
 from queryforge.soft_delete import SoftDeleteMixin
@@ -29,6 +30,9 @@ __all__ = [
     "offset_for_page",
     "QueryForgeError",
     "EntityNotFound",
+    "ProjectionError",
+    "ProjectionMode",
+    "ProjectionNested",
     "contains",
     "eq",
     "gte",

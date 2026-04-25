@@ -8,3 +8,20 @@ class QueryForgeError(Exception):
 
 class EntityNotFound(QueryForgeError, LookupError):
     """Сущность не найдена (например, по первичному ключу)."""
+
+
+class ProjectionError(QueryForgeError, ValueError):
+    """project()/into() не сопоставил DTO с колонками ORM (strict, смысл полей, nested)."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        dto_name: str | None = None,
+        field_name: str | None = None,
+        unmapped_fields: tuple[str, ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.dto_name = dto_name
+        self.field_name = field_name
+        self.unmapped_fields = unmapped_fields

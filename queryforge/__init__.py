@@ -9,13 +9,24 @@ from queryforge.audit import (
     get_audit_context,
     remove_audit_listener,
 )
-from queryforge.exceptions import EntityNotFound, ProjectionError, QueryForgeError
+from queryforge.exceptions import (
+    AlreadySoftDeleted,
+    EntityNotFound,
+    NotSoftDeleted,
+    ProjectionError,
+    QueryForgeError,
+)
 from queryforge.filters import FilterSet, contains, eq, gte, lte
 from queryforge.pagination import Page, offset_for_page
 from queryforge.projection import ProjectionMode, ProjectionNested
 from queryforge.query import JoinOp, PaginateTerminal, Query, QueryState
 from queryforge.repository import Repository
-from queryforge.soft_delete import SoftDeleteMixin
+from queryforge.soft_delete import (
+    SoftDeleteMixin,
+    get_soft_delete_policy,
+    is_soft_deleted,
+    set_soft_delete_policy,
+)
 from queryforge.sorting import SortSet, asc, desc, sort_expressions
 
 __all__ = [
@@ -27,10 +38,15 @@ __all__ = [
     "QueryState",
     "Repository",
     "SoftDeleteMixin",
+    "is_soft_deleted",
+    "set_soft_delete_policy",
+    "get_soft_delete_policy",
     "SortSet",
     "offset_for_page",
     "QueryForgeError",
     "EntityNotFound",
+    "AlreadySoftDeleted",
+    "NotSoftDeleted",
     "ProjectionError",
     "ProjectionMode",
     "ProjectionNested",

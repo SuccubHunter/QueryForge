@@ -55,8 +55,11 @@ def build_event(
     entity: str,
     entity_id: Any,
     changes: dict[str, dict[str, Any]] | None = None,
+    reason: str | None = None,
 ) -> dict[str, Any]:
-    aid, rsn = get_audit_context()
+    """reason: явное значение для payload; иначе берётся из AuditContext (если задано)."""
+    aid, ctx_reason = get_audit_context()
+    eff_reason = reason if reason is not None else ctx_reason
     out: dict[str, Any] = {
         "actor_id": str(aid) if aid is not None else None,
         "action": action,
@@ -65,6 +68,6 @@ def build_event(
     }
     if changes is not None:
         out["changes"] = changes
-    if rsn is not None:
-        out["reason"] = rsn
+    if eff_reason is not None:
+        out["reason"] = eff_reason
     return out

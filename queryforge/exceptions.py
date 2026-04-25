@@ -10,6 +10,14 @@ class EntityNotFound(QueryForgeError, LookupError):
     """Сущность не найдена (например, по первичному ключу)."""
 
 
+class AlreadySoftDeleted(QueryForgeError, RuntimeError):
+    """Повторное мягкое удаление уже удалённой записи."""
+
+
+class NotSoftDeleted(QueryForgeError, RuntimeError):
+    """Восстановление записи, которая не была мягко удалена."""
+
+
 class ProjectionError(QueryForgeError, ValueError):
     """project()/into() не сопоставил DTO с колонками ORM (strict, смысл полей, nested)."""
 

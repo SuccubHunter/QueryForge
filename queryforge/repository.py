@@ -10,10 +10,15 @@ from sqlalchemy import Select, inspect
 from sqlalchemy.exc import InvalidRequestError, NoInspectionAvailable
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from queryforge.audit import build_event, emit_audit_event
-from queryforge.exceptions import EntityNotFound
+from queryforge.audit import build_event, emit_audit_event, get_audit_context
+from queryforge.exceptions import EntityNotFound, NotSoftDeleted
 from queryforge.query import Query
-from queryforge.soft_delete import has_soft_delete, soft_delete_in_db
+from queryforge.soft_delete import (
+    hard_delete_in_db,
+    has_soft_delete,
+    restore_soft_deleted,
+    soft_delete_in_db,
+)
 
 M = TypeVar("M", bound=Any)
 
@@ -107,12 +112,52 @@ class Repository(Generic[M]):
             )
         )
 
-    async def delete(self, entity: M) -> None:
+    async def delete(
+        self,
+        entity: M,
+        *,
+        reason: str | None = None,
+        deleted_by: str | int | bool | UUID | None = None,
+    ) -> None:
         eid = _id_for_audit(entity)
-        await soft_delete_in_db(self._session, entity)
+        ctx_actor, ctx_reason = get_audit_context()
+        eff_by = deleted_by if deleted_by is not None else ctx_actor
+        eff_reason = reason if reason is not None else ctx_reason
+        await soft_delete_in_db(
+            self._session,
+            entity,
+            deleted_by=eff_by,
+            delete_reason=eff_reason,
+        )
         await emit_audit_event(
             build_event(
                 action=f"{self._model.__name__.lower()}.deleted",
+                entity=self._model.__name__,
+                entity_id=eid,
+                reason=eff_reason,
+            )
+        )
+
+    async def restore(self, entity: M) -> None:
+        eid = _id_for_audit(entity)
+        if not has_soft_delete(self._model):
+            msg = f"{self._model.__name__} не поддерживает мягкое удаление"
+            raise NotSoftDeleted(msg)
+        await restore_soft_deleted(self._session, entity)
+        await emit_audit_event(
+            build_event(
+                action=f"{self._model.__name__.lower()}.restored",
+                entity=self._model.__name__,
+                entity_id=eid,
+            )
+        )
+
+    async def hard_delete(self, entity: M) -> None:
+        eid = _id_for_audit(entity)
+        await hard_delete_in_db(self._session, entity)
+        await emit_audit_event(
+            build_event(
+                action=f"{self._model.__name__.lower()}.hard_deleted",
                 entity=self._model.__name__,
                 entity_id=eid,
             )

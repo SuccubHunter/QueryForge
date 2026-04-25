@@ -7,12 +7,19 @@ import uuid
 
 from pydantic import BaseModel
 from queryforge import SoftDeleteMixin
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import JSON, ForeignKey, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
     pass
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    payload: Mapped[dict] = mapped_column(JSON)
 
 
 class UserStatus(str, enum.Enum):

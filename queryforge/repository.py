@@ -10,7 +10,7 @@ from sqlalchemy import Select, inspect
 from sqlalchemy.exc import InvalidRequestError, NoInspectionAvailable
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from queryforge.audit import build_event, emit_audit_event, get_audit_context
+from queryforge.audit import build_event, get_audit_context, schedule_audit_event
 from queryforge.exceptions import EntityNotFound, NotSoftDeleted
 from queryforge.query import Query
 from queryforge.soft_delete import (
@@ -65,6 +65,24 @@ def _jsonify(v: Any) -> Any:
     return str(v)
 
 
+def _entity_column_snapshot(instance: Any) -> dict[str, Any]:
+    """Снимок mapped-колонок для аудита (old/new)."""
+    try:
+        st = inspect(instance, raiseerr=True)
+        mapper = getattr(st, "mapper", None)
+    except (NoInspectionAvailable, InvalidRequestError, TypeError, AttributeError):
+        return {"value": str(instance)}
+    if mapper is None:
+        return {"value": str(instance)}
+    out: dict[str, Any] = {}
+    for col in mapper.column_attrs:
+        key = col.key
+        if key.startswith("_"):
+            continue
+        out[key] = _jsonify(getattr(instance, key, None))
+    return out
+
+
 class Repository(Generic[M]):
     """Репозиторий: query(), get* и write с опциональным аудитом."""
 
@@ -104,12 +122,15 @@ class Repository(Generic[M]):
         self._session.add(entity)
         await self._session.flush()
         eid = _id_for_audit(entity)
-        await emit_audit_event(
+        snap = _entity_column_snapshot(entity)
+        await schedule_audit_event(
+            self._session,
             build_event(
                 action=f"{self._model.__name__.lower()}.created",
                 entity=self._model.__name__,
                 entity_id=eid,
-            )
+                snapshot={"old": None, "new": snap},
+            ),
         )
 
     async def delete(
@@ -120,22 +141,25 @@ class Repository(Generic[M]):
         deleted_by: str | int | bool | UUID | None = None,
     ) -> None:
         eid = _id_for_audit(entity)
-        ctx_actor, ctx_reason = get_audit_context()
-        eff_by = deleted_by if deleted_by is not None else ctx_actor
-        eff_reason = reason if reason is not None else ctx_reason
+        ctx = get_audit_context()
+        old_snap = _entity_column_snapshot(entity)
+        eff_by = deleted_by if deleted_by is not None else ctx.actor_id
+        eff_reason = reason if reason is not None else ctx.reason
         await soft_delete_in_db(
             self._session,
             entity,
             deleted_by=eff_by,
             delete_reason=eff_reason,
         )
-        await emit_audit_event(
+        await schedule_audit_event(
+            self._session,
             build_event(
                 action=f"{self._model.__name__.lower()}.deleted",
                 entity=self._model.__name__,
                 entity_id=eid,
                 reason=eff_reason,
-            )
+                snapshot={"old": old_snap, "new": None},
+            ),
         )
 
     async def restore(self, entity: M) -> None:
@@ -143,24 +167,31 @@ class Repository(Generic[M]):
         if not has_soft_delete(self._model):
             msg = f"{self._model.__name__} не поддерживает мягкое удаление"
             raise NotSoftDeleted(msg)
+        old_snap = _entity_column_snapshot(entity)
         await restore_soft_deleted(self._session, entity)
-        await emit_audit_event(
+        new_snap = _entity_column_snapshot(entity)
+        await schedule_audit_event(
+            self._session,
             build_event(
                 action=f"{self._model.__name__.lower()}.restored",
                 entity=self._model.__name__,
                 entity_id=eid,
-            )
+                snapshot={"old": old_snap, "new": new_snap},
+            ),
         )
 
     async def hard_delete(self, entity: M) -> None:
         eid = _id_for_audit(entity)
+        old_snap = _entity_column_snapshot(entity)
         await hard_delete_in_db(self._session, entity)
-        await emit_audit_event(
+        await schedule_audit_event(
+            self._session,
             build_event(
                 action=f"{self._model.__name__.lower()}.hard_deleted",
                 entity=self._model.__name__,
                 entity_id=eid,
-            )
+                snapshot={"old": old_snap, "new": None},
+            ),
         )
 
     async def update(self, entity: M, **values: Any) -> None:
@@ -175,11 +206,12 @@ class Repository(Generic[M]):
         await self._session.flush()
         eid = _id_for_audit(entity)
         if changes:
-            await emit_audit_event(
+            await schedule_audit_event(
+                self._session,
                 build_event(
                     action=f"{self._model.__name__.lower()}.updated",
                     entity=self._model.__name__,
                     entity_id=eid,
                     changes=changes,
-                )
+                ),
             )

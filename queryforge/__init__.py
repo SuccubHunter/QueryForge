@@ -2,13 +2,20 @@
 from __future__ import annotations
 
 from queryforge.audit import (
+    AuditConfig,
     AuditContext,
+    AuditContextState,
     add_audit_listener,
     build_event,
+    configure_audit,
     emit_audit_event,
+    get_audit_config,
     get_audit_context,
     remove_audit_listener,
+    reset_audit_config,
+    schedule_audit_event,
 )
+from queryforge.audit_storage import AuditStorageBackend, SQLAlchemyAuditStorage
 from queryforge.exceptions import (
     AlreadySoftDeleted,
     EntityNotFound,
@@ -57,12 +64,20 @@ __all__ = [
     "asc",
     "desc",
     "sort_expressions",
+    "AuditConfig",
     "AuditContext",
+    "AuditContextState",
+    "AuditStorageBackend",
+    "SQLAlchemyAuditStorage",
     "add_audit_listener",
     "remove_audit_listener",
     "emit_audit_event",
     "build_event",
     "get_audit_context",
+    "get_audit_config",
+    "configure_audit",
+    "reset_audit_config",
+    "schedule_audit_event",
 ]
 
 __version__ = "0.1.0"

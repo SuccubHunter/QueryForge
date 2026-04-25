@@ -92,7 +92,8 @@ def test_query_params_subscript_is_model_with_filters_sort_pagination() -> None:
     Qp = QueryParams[_Filt, _Sort]
     m = Qp(min_age=5, page=2, size=10, sort="-email")
     assert m.page == 2 and m.size == 10 and m.min_age == 5
-    assert len(m.sort_terms()) == 1
+    # email по убыванию + стабилизирующий PK
+    assert len(m.sort_terms()) == 2
     p = m.model_validate({})
     assert p.page == 1 and p.size == 20 and p.min_age is None
 

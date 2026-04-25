@@ -85,12 +85,14 @@ class SortParams(BaseModel):
 
     sort: str | None = Field(
         default=None,
-        description="Имя поля из SortSet; префикс «-» — сортировка по убыванию",
+        description=(
+            "Поля через запятую; префикс «-» у поля — по убыванию (пример: -created_at,email)"
+        ),
     )
 
     def order_terms(self, sort_set: type[SortSetBase[Any]]) -> list[Any]:
         if self.sort is None or not str(self.sort).strip():
-            return []
+            return sort_set.from_param("")
         return sort_set.from_param(self.sort)
 
 
@@ -140,12 +142,18 @@ def _build_query_params_class(
         size: int = Field(default=20, ge=1, le=500, description="Размер страницы")
         sort: str | None = Field(
             default=None,
-            description="Поле сортировки из SortSet; префикс «-» — по убыванию",
+            description=(
+                "Поля через запятую; префикс «-» — по убыванию (например -created_at,email)"
+            ),
         )
 
         @model_validator(mode="after")
         def _check_sort_against_set(self) -> Self:
             if self.sort is None or not str(self.sort).strip():
+                try:
+                    s_ref.from_param("")
+                except ValueError as e:
+                    raise ValueError(str(e)) from e
                 return self
             try:
                 s_ref.from_param(self.sort)
@@ -155,7 +163,7 @@ def _build_query_params_class(
 
         def sort_terms(self) -> list[Any]:
             if self.sort is None or not str(self.sort).strip():
-                return []
+                return s_ref.from_param("")
             return s_ref.from_param(self.sort)
 
     out_name = f"{filter_cls.__name__}QueryParams"
